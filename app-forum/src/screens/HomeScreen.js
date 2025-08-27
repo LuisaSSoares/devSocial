@@ -23,10 +23,12 @@ const HomeScreen = ({ navigation }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [userLikes, setUserLikes] = useState({});
+  const [userFavorites, setUserFavorites] = useState({});
   const [currentUserId, setCurrentUserId] = useState(null);
   const [currentUsername, setCurrentUsername] = useState('Carregando...');
   const [currentProfilePicture, setCurrentProfilePicture] = useState(null);
-  const [newPostImageUri, setNewPostImageUri] = useState(null); 
+  const [newPostImageUri, setNewPostImageUri] = useState(null);
+
 
   // Referências e valores de animação para os inputs
   const searchInputRef = useRef(null);
@@ -117,6 +119,7 @@ const HomeScreen = ({ navigation }) => {
       const response = await api.get(`/posts?q=${searchTerm}`);
 
       let initialUserLikes = {};
+      let initialUserFavorites = {};
       if (currentUserId) {
         try {
           const likesResponse = await api.get(`/users/${currentUserId}/likes`, {
@@ -129,7 +132,21 @@ const HomeScreen = ({ navigation }) => {
           console.error('Erro ao buscar likes do usuário para inicialização:', likesError.response?.data || likesError.message);
         }
       }
+      // Favoritos (persistência local; não precisa de rota no back)
+      try {
+        const saved = await AsyncStorage.getItem(`userFavorites_${currentUserId}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === 'object') {
+            initialUserFavorites = parsed;
+          }
+        }
+      } catch (favLoadError) {
+        console.error('Erro ao carregar favoritos locais:', favLoadError);
+      }
+
       setUserLikes(initialUserLikes);
+      setUserFavorites(initialUserFavorites);
       setPosts(response.data);
     } catch (error) {
       console.error('Erro ao buscar posts:', error.response?.data || error.message);
@@ -272,28 +289,38 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  const handleToggleFavorite = async (postId) => {
-    try {
-      const userToken = await AsyncStorage.getItem('userToken');
-      if (!userToken) {
-        Alert.alert('Erro', 'Você precisa estar logado para favoritar posts.');
-        signOut();
-        return;
-      }
-      const response = await api.post(
-        `/posts/${postId}/favorite`,
-        {},
-        { headers: { Authorization: `Bearer ${userToken}` } }
-      );
-      Alert.alert('Sucesso', response.data.message);
-    } catch (error) {
-      console.error('Erro ao favoritar/desfavoritar:', error.response?.data || error.message);
-      Alert.alert('Erro', error.response?.data?.message || 'Não foi possível processar o favorito.');
-      if (error.response?.status === 401 || error.response?.status === 403) {
-        signOut();
-      }
+const handleToggleFavorite = async (postId) => {
+  try {
+    const userToken = await AsyncStorage.getItem('userToken');
+    if (!userToken) {
+      Alert.alert('Erro', 'Você precisa estar logado para favoritar posts.');
+      signOut();
+      return;
     }
-  };
+
+    const response = await api.post(
+      `/posts/${postId}/favorite`,
+      {},
+      { headers: { Authorization: `Bearer ${userToken}` } }
+    );
+
+    const favorited = !!response.data?.favorited;
+
+    setUserFavorites(prev => {
+      const updated = { ...prev, [postId]: favorited };
+      if (currentUserId) {
+        AsyncStorage.setItem(`userFavorites_${currentUserId}`, JSON.stringify(updated)).catch(() => {});
+      }
+      return updated;
+    });
+  } catch (error) {
+    console.error('Erro ao favoritar/desfavoritar:', error.response?.data || error.message);
+    Alert.alert('Erro', error.response?.data?.message || 'Não foi possível processar o favorito.');
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      signOut?.();
+    }
+  }
+};
 
   const handleLogout = async () => {
     try {
@@ -337,7 +364,7 @@ const HomeScreen = ({ navigation }) => {
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.interactionButton} onPress={() => handleToggleFavorite(item.id)}>
-          <Ionicons name="bookmark-outline" size={24} color="#666" />
+          <Ionicons name={userFavorites[item.id] ? 'bookmark' : 'bookmark-outline'} size={24} color={userFavorites[item.id] ? '#A366FF' : '#666'}  />
         </TouchableOpacity>
       </View>
     </View>
