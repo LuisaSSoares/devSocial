@@ -149,3 +149,48 @@ exports.searchPosts = async (req, res) => {
     res.status(500).json({ message: 'Erro interno do servidor ao buscar/pesquisar posts.' });
   }
 };
+
+// Função para atualizar um post
+exports.updatePost = async (req, res) => {
+  const { id } = req.params;
+  const { title, content, image_url } = req.body;
+  const userId = req.user.id; // ID do usuário autenticado
+
+  try {
+    const [result] = await pool.query(
+      'UPDATE posts SET title = ?, content = ?, image_url = ?, updated_at = NOW() WHERE id = ? AND user_id = ?',
+      [title, content, image_url, id, userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Post não encontrado ou você não tem permissão para editá-lo.' });
+    }
+
+    res.status(200).json({ message: 'Post atualizado com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao atualizar post:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+};
+
+// Função para excluir um post
+exports.deletePost = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id; // ID do usuário autenticado
+
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM posts WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Post não encontrado ou você não tem permissão para excluí-lo.' });
+    }
+
+    res.status(200).json({ message: 'Post excluído com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir post:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+};

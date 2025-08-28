@@ -17,4 +17,8 @@ router.get('/', postController.searchPosts); // Agora esta rota vai lidar com a 
 router.post('/:postId/like', authMiddleware.verifyToken, postController.toggleLike);
 router.post('/:postId/favorite', authMiddleware.verifyToken, postController.toggleFavorite);
 
+//Rotas para exclusão e edção de posts
+router.put('/:id', authMiddleware.verifyToken, postController.updatePost); // Rota de Edição
+router.delete('/:id', authMiddleware.verifyToken, postController.deletePost); // Rota de Exclusão
+
 module.exports = router;

@@ -157,4 +157,14 @@ exports.updateProfile = async (req, res) => {
     console.error('Erro ao atualizar perfil do usuário:', error);
     res.status(500).json({ message: 'Erro interno do servidor ao atualizar perfil.' });
   }
+}
+exports.deleteProfilePicture = async (req, res) => {
+  const userId = req.user.id;
+  try {
+    await pool.query('UPDATE users SET profile_picture_url = NULL WHERE id = ?', [userId]);
+    res.status(200).json({ message: 'Foto de perfil excluída com sucesso!' });
+  } catch (error) {
+    console.error('Erro ao excluir foto de perfil:', error);
+    res.status(500).json({ message: 'Erro interno do servidor ao excluir a foto de perfil.' });
+  }
 };

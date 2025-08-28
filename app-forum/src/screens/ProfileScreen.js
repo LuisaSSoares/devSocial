@@ -11,6 +11,7 @@ import api from '../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import background from '../../assets/3348271.jpg'; // Importa a mesma imagem de fundo
+import Modal from 'react-native-modal';
 
 const ProfileScreen = ({ navigation }) => {
   const { signOut } = useContext(AuthContext);
@@ -19,6 +20,9 @@ const ProfileScreen = ({ navigation }) => {
   const [favoritePosts, setFavoritePosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('myPosts');
+  const [isModalVisible, setModalVisible] = useState(false);
+  const [postToDelete, setPostToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     // Adicionar um listener para focar na tela e recarregar os dados
@@ -65,15 +69,70 @@ const ProfileScreen = ({ navigation }) => {
     }
   };
 
+    // Funções de Edição e Exclusão
+    const handleEditPost = (post) => {
+      // Implemente a navegação para a tela de edição
+      navigation.navigate('EditPost', { post });
+    };
+
+    const handleDeletePostConfirmation = (post) => {
+      setPostToDelete(post);
+      setModalVisible(true);
+    };
+
+    const handleDeletePost = async () => {
+      if (!postToDelete) return;
+      setIsDeleting(true);
+      try {
+        const userToken = await AsyncStorage.getItem('userToken');
+        if (!userToken) {
+          Alert.alert('Erro', 'Token de autenticação não encontrado.');
+          signOut();
+          return;
+        }
+        await api.delete(`/posts/${postToDelete.id}`, {
+          headers: { Authorization: `Bearer ${userToken}` }
+        });
+        Alert.alert('Sucesso', `O post "${postToDelete.title}" foi excluído.`);
+        // Atualiza a lista de posts após a exclusão
+        fetchProfileData();
+      } catch (error) {
+        console.error('Erro ao excluir post:', error.response?.data || error.message);
+        Alert.alert('Erro', 'Não foi possível excluir o post.');
+      } finally {
+        setIsDeleting(false);
+        setModalVisible(false);
+        setPostToDelete(null);
+      }
+    };  
+        
+
   const renderPostItem = ({ item }) => (
     <TouchableOpacity onPress={() => navigation.navigate('PostDetail', { postId: item.id })}>
       <View style={styles.postCard}>
         <Text style={styles.postTitle}>{item.title}</Text>
         <Text style={styles.postContentPreview}>{item.content.substring(0, 100)}...</Text>
+        {item.image_url && (
+          <Image
+            source={{ uri: `http://localhost:3001${item.image_url}` }}
+            style={styles.postImage}
+          />
+        )}
+
         <View style={styles.postStatsRow}>
           <Text style={styles.postStatItem}>{item.likes_count} Curtidas</Text>
           <Text style={styles.postStatItem}>{item.comments_count} Comentários</Text>
         </View>
+        {activeTab === 'myPosts' && (
+            <View style={styles.postActions}>
+              <TouchableOpacity onPress={() => handleEditPost(item)}>
+                <Ionicons name="create-outline" size={24} color="#F353D5" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleDeletePostConfirmation(item)}>
+                <Ionicons name="trash-outline" size={24} color="red" />
+              </TouchableOpacity>
+            </View>
+          )}
       </View>
     </TouchableOpacity>
   );
@@ -166,6 +225,27 @@ const ProfileScreen = ({ navigation }) => {
           )}
         </ScrollView>
       </SafeAreaView>
+      <Modal isVisible={isModalVisible} style={styles.modal}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Confirmar Exclusão</Text>
+          <Text style={styles.modalMessage}>Tem certeza que deseja excluir o post "{postToDelete?.title}"?</Text>
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton]}
+              onPress={() => setModalVisible(false)}
+            >
+              <Text style={styles.modalButtonText}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.confirmButton]}
+              onPress={handleDeletePost}
+              disabled={isDeleting}
+            >
+              <Text style={styles.modalButtonText}>{isDeleting ? 'Excluindo...' : 'Sim, Excluir'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ImageBackground>
   );
 };
@@ -330,6 +410,72 @@ const styles = StyleSheet.create({
     color: '#E5E5E5',
     marginHorizontal: 15,
   },
+  postImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 10,
+    marginTop: 10,
+    resizeMode: 'cover',
+    borderWidth: 1,
+    borderColor: '#A366FF',
+  },
+  postActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 15,
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#A366FF',
+    paddingTop: 8,
+  },
+  modal: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#0A192F',
+    padding: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 15,
+    borderColor: '#4DFFFF',
+    borderWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    color: '#E5E5E5',
+  },
+  modalMessage: {
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+    color: '#ccc',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  modalButton: {
+    padding: 10,
+    borderRadius: 8,
+    flex: 1,
+    marginHorizontal: 5,
+    alignItems: 'center',
+  },
+  modalButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  confirmButton: {
+    backgroundColor: '#F353D5',
+  },
+  cancelButton: {
+    backgroundColor: '#555',
+  },
 });
+
 
 export default ProfileScreen;

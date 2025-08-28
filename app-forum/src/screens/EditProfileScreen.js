@@ -4,7 +4,7 @@ import React, { useState, useContext, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, StyleSheet, Alert,
   ScrollView, ActivityIndicator, Image, TouchableOpacity,
-  Platform, ImageBackground, Animated
+  Platform, ImageBackground, Animated, Dimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AuthContext from '../context/AuthContext';
@@ -12,8 +12,11 @@ import api from '../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import Modal from 'react-native-modal';
 
 import background from '../../assets/3348271.jpg';
+
+const { width } = Dimensions.get('window');
 
 const EditProfileScreen = ({ route, navigation }) => {
   const { user: initialUser } = route.params;
@@ -27,6 +30,7 @@ const EditProfileScreen = ({ route, navigation }) => {
   const [profilePictureUrl, setProfilePictureUrl] = useState(initialUser.profile_picture_url);
   const [selectedImageUri, setSelectedImageUri] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
 
   // Animação dos placeholders
   const usernameAnim = useRef(new Animated.Value(username ? 1 : 0)).current;
@@ -55,6 +59,7 @@ const EditProfileScreen = ({ route, navigation }) => {
     }
   };
 
+  // Garante que a permissão de galeria seja solicitada
   useEffect(() => {
     (async () => {
       if (Platform.OS !== 'web') {
@@ -80,79 +85,115 @@ const EditProfileScreen = ({ route, navigation }) => {
     }
   };
 
-  const handleUpdateProfile = async () => {
-    if (newPassword && newPassword !== confirmNewPassword) {
-      Alert.alert('Erro', 'As novas senhas não coincidem.');
-      return;
-    }
-
+  // NOVA FUNÇÃO: Lidar com a exclusão da foto de perfil
+  const handleDeleteProfilePicture = async () => {
+    setDeleteModalVisible(false); // Fecha o modal imediatamente
     setIsSubmitting(true);
     try {
       const userToken = await AsyncStorage.getItem('userToken');
-      if (!userToken) {
-        Alert.alert('Erro de Autenticação', 'Você precisa estar logado para editar seu perfil.');
-        signOut();
-        return;
-      }
-
-      let imageUrlToSave = profilePictureUrl;
-      if (selectedImageUri) {
-        const formData = new FormData();
-        const filename = selectedImageUri.split('/').pop();
-        const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image';
-        
-        formData.append('profilePicture', {
-            uri: Platform.OS === 'android' ? selectedImageUri : selectedImageUri.replace('file://', ''),
-            name: `${initialUser.id}_${Date.now()}.${match ? match[1] : 'jpg'}`,
-            type: type,
-        });
-
-        try {
-          const uploadResponse = await api.post('/upload/profile-picture', formData, {
-            headers: {
-              'Content-Type': 'multipart/form-data',
-              'Authorization': `Bearer ${userToken}`,
-            },
-          });
-          imageUrlToSave = uploadResponse.data.imageUrl;
-        } catch (uploadError) {
-          console.error('Erro ao fazer upload da imagem:', uploadError.response?.data || uploadError.message);
-          Alert.alert('Erro de Upload', 'Não foi possível fazer upload da imagem de perfil. As outras informações foram salvas.');
-        }
-      }
-
-      const updatedData = {};
-      if (username.trim() !== initialUser.username) updatedData.username = username.trim();
-      if (email.trim() !== initialUser.email) updatedData.email = email.trim();
-      if (newPassword) {
-        updatedData.oldPassword = oldPassword;
-        updatedData.newPassword = newPassword;
-      }
-      if (imageUrlToSave !== initialUser.profile_picture_url) {
-        updatedData.profile_picture_url = imageUrlToSave;
-      }
-
-      if (Object.keys(updatedData).length > 0) {
-        await api.put('/users/me', updatedData, {
-          headers: { Authorization: `Bearer ${userToken}` },
-        });
-
-        const updatedUser = { ...initialUser, ...updatedData, profile_picture_url: imageUrlToSave };
-        await AsyncStorage.setItem('userData', JSON.stringify(updatedUser));
-
-        Alert.alert('Sucesso', 'Perfil atualizado com sucesso!');
-      } else {
-        Alert.alert('Aviso', 'Nenhuma alteração detectada para salvar.');
-      }
-
+      await api.put('/users/me/profile-picture', {}, {
+        headers: {
+          'Authorization': `Bearer ${userToken}`,
+        },
+      });
+      setProfilePictureUrl(null);
+      setSelectedImageUri(null);
+      Alert.alert('Sucesso', 'Foto de perfil excluída com sucesso!');
       navigation.goBack();
     } catch (error) {
-      console.error('Erro ao atualizar perfil:', error.response?.data || error.message);
-      Alert.alert('Erro', error.response?.data?.message || 'Ocorreu um erro ao atualizar o perfil.');
-      if (error.response?.status === 401 || error.response?.status === 403) {
-        signOut();
+      console.error('Erro ao excluir a foto de perfil:', error.response ? error.response.data : error.message);
+      Alert.alert('Erro', 'Ocorreu um erro ao excluir a foto de perfil. Tente novamente mais tarde.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUpdateProfile = async () => {
+    setIsSubmitting(true);
+    const updatedData = {};
+    let finalProfilePictureUrl = profilePictureUrl;
+  
+    // 1. Lógica para UPLOAD da imagem (se houver)
+    if (selectedImageUri) {
+      try {
+        const response = await fetch(selectedImageUri);
+        const blob = await response.blob();
+        
+        const formData = new FormData();
+        formData.append('profilePicture', blob, `profile-${Date.now()}.jpg`);
+  
+        const userToken = await AsyncStorage.getItem('userToken');
+        const uploadResponse = await api.post('/upload/profile-picture', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'Authorization': `Bearer ${userToken}`,
+          },
+        });
+  
+        if (uploadResponse.data && uploadResponse.data.imageUrl) {
+          finalProfilePictureUrl = uploadResponse.data.imageUrl;
+        } else {
+          Alert.alert('Erro no Upload', 'Ocorreu um erro ao fazer upload da imagem. Por favor, tente novamente.');
+          setIsSubmitting(false);
+          return;
+        }
+      } catch (error) {
+        console.error('Erro ao fazer upload da imagem:', error.response ? error.response.data : error.message);
+        Alert.alert('Erro no Upload', 'Ocorreu um erro ao fazer upload da imagem. Verifique sua conexão ou se está logado.');
+        setIsSubmitting(false);
+        return;
       }
+    }
+  
+    // 2. Lógica para ATUALIZAR DADOS do perfil (incluindo senhas)
+    if (username !== initialUser.username) {
+      updatedData.username = username;
+    }
+    if (email !== initialUser.email) {
+      updatedData.email = email;
+    }
+    if (finalProfilePictureUrl !== initialUser.profile_picture_url) {
+      updatedData.profile_picture_url = finalProfilePictureUrl;
+    }
+  
+    // Lógica para alterar a senha
+    if (oldPassword || newPassword || confirmNewPassword) {
+      if (!oldPassword || !newPassword || !confirmNewPassword) {
+        Alert.alert('Erro', 'Por favor, preencha todos os campos de senha para alterá-la.');
+        setIsSubmitting(false);
+        return;
+      }
+      if (newPassword !== confirmNewPassword) {
+        Alert.alert('Erro', 'A nova senha e a confirmação de senha não coincidem.');
+        setIsSubmitting(false);
+        return;
+      }
+      updatedData.old_password = oldPassword;
+      updatedData.new_password = newPassword;
+    }
+  
+    if (Object.keys(updatedData).length === 0) {
+      Alert.alert('Nenhuma alteração', 'Nenhum dado do perfil foi alterado.');
+      setIsSubmitting(false);
+      return;
+    }
+  
+    try {
+      const userToken = await AsyncStorage.getItem('userToken');
+      const response = await api.put('/users/me', updatedData, {
+        headers: {
+            'Authorization': `Bearer ${userToken}`,
+        },
+      });
+      
+      Alert.alert('Sucesso', 'Perfil atualizado com sucesso!');
+      
+      const newUserData = { ...initialUser, ...updatedData };
+      await AsyncStorage.setItem('userData', JSON.stringify(newUserData));
+      navigation.goBack();
+    } catch (error) {
+      console.error('Erro ao atualizar perfil:', error.response ? error.response.data : error.message);
+      Alert.alert('Erro', 'Erro ao atualizar o perfil. Tente novamente mais tarde.');
     } finally {
       setIsSubmitting(false);
     }
@@ -199,6 +240,13 @@ const EditProfileScreen = ({ route, navigation }) => {
               )}
               <Text style={styles.changePhotoText}>Alterar Foto de Perfil</Text>
             </TouchableOpacity>
+
+            {/* BOTÃO DE EXCLUSÃO CONDICIONAL */}
+            {(profilePictureUrl || selectedImageUri) && (
+              <TouchableOpacity style={styles.deleteButton} onPress={() => setDeleteModalVisible(true)}>
+                <Text style={styles.deleteButtonText}>Excluir Foto de Perfil</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Input de Nome de Usuário com Placeholder Animado */}
             <View style={styles.inputContainer}>
@@ -293,6 +341,34 @@ const EditProfileScreen = ({ route, navigation }) => {
             </TouchableOpacity>
           </View>
         </ScrollView>
+
+        {/* Modal de confirmação de exclusão */}
+        <Modal
+          isVisible={isDeleteModalVisible}
+          onBackdropPress={() => setDeleteModalVisible(false)}
+          animationIn="fadeIn"
+          animationOut="fadeOut"
+          style={styles.modal}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Confirmar Exclusão</Text>
+            <Text style={styles.modalMessage}>Tem certeza de que deseja excluir sua foto de perfil? Esta ação não pode ser desfeita.</Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setDeleteModalVisible(false)}
+              >
+                <Text style={styles.modalButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.deleteAction]}
+                onPress={handleDeleteProfilePicture}
+              >
+                <Text style={styles.modalButtonText}>Apagar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </ImageBackground>
   );
@@ -347,7 +423,7 @@ const styles = StyleSheet.create({
   },
   profilePictureContainer: {
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 10,
   },
   profilePicture: {
     width: 120,
@@ -369,6 +445,21 @@ const styles = StyleSheet.create({
     color: '#4DFFFF',
     fontWeight: 'bold',
   },
+  deleteButton: {
+    marginTop: 10,
+    marginBottom: 20,
+    padding: 10,
+    backgroundColor: 'rgba(243, 83, 213, 0.2)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F353D5',
+    alignItems: 'center',
+  },
+  deleteButtonText: {
+    color: '#F353D5',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
   inputContainer: {
     marginBottom: 15,
     width: '100%',
@@ -381,7 +472,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10, 25, 47, 0.9)',
     color: '#E5E5E5',
     fontSize: 16,
-    paddingTop: 25, 
+    paddingTop: 25,
   },
   placeholder: {
     position: 'absolute',
@@ -418,11 +509,59 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 8,
     alignItems: 'center',
-    marginTop: 20,
   },
   submitButtonText: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: 'bold',
+  },
+  // NOVOS ESTILOS DO MODAL
+  modal: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#0A192F',
+    padding: 22,
+    borderRadius: 15,
+    borderColor: '#4DFFFF',
+    borderWidth: 1,
+    width: width * 0.8,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    color: '#E5E5E5',
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: 16,
+    color: '#ccc',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modalButtons: {
+    marginTop: 15,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  modalButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginHorizontal: 5,
+  },
+  cancelButton: {
+    backgroundColor: '#666',
+  },
+  deleteAction: {
+    backgroundColor: '#F353D5',
+  },
+  modalButtonText: {
+    color: '#fff',
     fontWeight: 'bold',
   },
 });

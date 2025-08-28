@@ -19,6 +19,9 @@ router.get('/me/favorites', authMiddleware.verifyToken, userController.getMyFavo
 // Rota para atualizar o perfil do usuário (requer autenticação)
 router.put('/me', authMiddleware.verifyToken, userController.updateProfile);
 
+//Rota para excluir a foto de perfil do usuário
+router.put('/me/profile-picture', authMiddleware.verifyToken, userController.deleteProfilePicture);
+
 // Endpoint adicional para buscar likes de um usuário (para o frontend saber o que colorir)
 // Este endpoint pode ser usado pelo frontend para popular o `userLikes` ao carregar a HomeScreen
 router.get('/:userId/likes', authMiddleware.verifyToken, async (req, res) => {

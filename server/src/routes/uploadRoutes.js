@@ -7,7 +7,7 @@ const authMiddleware = require('../middlewares/authMiddleware');
 
 // Rota para upload de foto de perfil
 router.post(
-  '/upload/profile-picture',
+  '/profile-picture',
   authMiddleware.verifyToken,
   uploadController.uploadProfilePicture,
   uploadController.handleProfilePictureUpload

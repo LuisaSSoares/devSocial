@@ -1,3 +1,5 @@
+// src/screens/PostDetailScreen.js
+
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput,
@@ -10,6 +12,7 @@ import AuthContext from '../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import background from '../../assets/3348271.jpg'; // Importa a imagem de fundo
+import Modal from 'react-native-modal';
 
 const PostDetailScreen = ({ route, navigation }) => {
   const { postId } = route.params;
@@ -19,6 +22,12 @@ const PostDetailScreen = ({ route, navigation }) => {
   const [newCommentContent, setNewCommentContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState(null); // Estado para guardar o ID do usuário atual
+  const [isEditModalVisible, setEditModalVisible] = useState(false);
+  const [editingComment, setEditingComment] = useState(null);
+  const [editedContent, setEditedContent] = useState('');
+  const [isDeleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [commentToDelete, setCommentToDelete] = useState(null);
 
   // Animação para o placeholder do input de comentário
   const newCommentAnim = useRef(new Animated.Value(newCommentContent ? 1 : 0)).current;
@@ -33,386 +42,467 @@ const PostDetailScreen = ({ route, navigation }) => {
   };
 
   // Função para animar o placeholder para baixo
-  const animatePlaceholderDown = (animValue, value) => {
-    if (!value) {
-      Animated.timing(animValue, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
+  const animatePlaceholderDown = (animValue) => {
+    Animated.timing(animValue, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  };
+
+  // Efeito para a animação do placeholder do novo comentário
+  useEffect(() => {
+    if (newCommentContent) {
+      animatePlaceholderUp(newCommentAnim);
+    } else {
+      animatePlaceholderDown(newCommentAnim);
+    }
+  }, [newCommentContent]);
+
+  // Função para buscar o ID do usuário logado
+  const fetchCurrentUserId = async () => {
+    try {
+      const userData = await AsyncStorage.getItem('userData');
+      if (userData) {
+        const parsedUser = JSON.parse(userData);
+        setCurrentUserId(parsedUser.id);
+        console.log("ID do usuário logado:", parsedUser.id);
+      } else {
+        console.log("ID do usuário logado: null");
+      }
+    } catch (error) {
+      console.error("Erro ao buscar o ID do usuário:", error);
     }
   };
 
-  useEffect(() => {
-    fetchPostAndComments();
-  }, [postId]);
-
+  // Função para buscar os dados do post e comentários
   const fetchPostAndComments = async () => {
     setLoading(true);
     try {
-      const postResponse = await api.get(`/posts/${postId}`);
+      // Buscar post e comentários em paralelo
+      const [postResponse, commentsResponse] = await Promise.all([
+        api.get(`/posts/${postId}`),
+        api.get(`/comments/${postId}`),
+      ]);
       setPost(postResponse.data);
-
-      const commentsResponse = await api.get(`/comments/${postId}`);
       setComments(commentsResponse.data);
-
     } catch (error) {
-      console.error('Erro ao buscar detalhes do post/comentários:', error.response?.data || error.message);
-      Alert.alert('Erro', 'Não foi possível carregar os detalhes do post.');
-      if (error.response?.status === 401 || error.response?.status === 403) {
-        signOut();
-      }
+      Alert.alert('Erro', 'Não foi possível carregar o post e os comentários.');
+      console.error('Erro ao buscar post e comentários:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddComment = async () => {
+  // Efeito para carregar os dados quando a tela é focada
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchCurrentUserId();
+      fetchPostAndComments();
+    });
+    return unsubscribe;
+  }, [navigation, postId]);
+
+  const handleNewComment = async () => {
     if (!newCommentContent.trim()) {
-      Alert.alert('Aviso', 'O comentário não pode ser vazio.');
+      Alert.alert('Atenção', 'O comentário não pode ser vazio.');
       return;
     }
-
     setIsSubmittingComment(true);
     try {
       const userToken = await AsyncStorage.getItem('userToken');
       if (!userToken) {
-        Alert.alert('Erro de Autenticação', 'Você precisa estar logado para comentar.');
+        Alert.alert('Erro', 'Token de autenticação não encontrado.');
         signOut();
         return;
       }
 
-      await api.post(`/comments/${postId}`, { content: newCommentContent }, {
-        headers: { Authorization: `Bearer ${userToken}` },
-      });
+      await api.post(`/comments/${postId}`,
+        { content: newCommentContent },
+        { headers: { Authorization: `Bearer ${userToken}` } }
+      );
 
       setNewCommentContent('');
-      // Recarrega os comentários para exibir o novo
-      fetchPostAndComments();
-
+      fetchPostAndComments(); // Recarrega os comentários para ver o novo
     } catch (error) {
-      console.error('Erro ao adicionar comentário:', error.response?.data || error.message);
-      Alert.alert('Erro', 'Ocorreu um erro ao adicionar o comentário.');
+      Alert.alert('Erro', 'Não foi possível adicionar o comentário.');
+      console.error('Erro ao adicionar comentário:', error);
     } finally {
       setIsSubmittingComment(false);
     }
   };
 
-  // Renderiza um único item de comentário
-  const renderComment = ({ item: comment }) => (
-    <View style={styles.commentCard}>
-      <View style={styles.commentHeader}>
-        {comment.profile_picture_url ? (
+  const handleEditComment = (comment) => {
+    setEditingComment(comment);
+    setEditedContent(comment.content);
+    setEditModalVisible(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editedContent.trim()) {
+      Alert.alert('Atenção', 'O comentário não pode ser vazio.');
+      return;
+    }
+    try {
+      const userToken = await AsyncStorage.getItem('userToken');
+      await api.put(`/comments/${editingComment.id}`,
+        { content: editedContent },
+        { headers: { Authorization: `Bearer ${userToken}` } }
+      );
+      setEditModalVisible(false);
+      setEditingComment(null);
+      fetchPostAndComments();
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível atualizar o comentário.');
+      console.error('Erro ao atualizar comentário:', error);
+    }
+  };
+
+  const handleDeleteComment = (comment) => {
+    setCommentToDelete(comment);
+    setDeleteModalVisible(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    try {
+      const userToken = await AsyncStorage.getItem('userToken');
+      await api.delete(`/comments/${commentToDelete.id}`,
+        { headers: { Authorization: `Bearer ${userToken}` } }
+      );
+      setDeleteModalVisible(false);
+      setCommentToDelete(null);
+      fetchPostAndComments();
+    } catch (error) {
+      Alert.alert('Erro', 'Não foi possível deletar o comentário.');
+      console.error('Erro ao deletar comentário:', error);
+    }
+  };
+
+  const renderComment = ({ item }) => {
+    const isOwner = currentUserId && (item.user_id == currentUserId); // Usa == para comparar string com number se necessário
+    console.log(`Debug: Current User ID: ${currentUserId}, Comment User ID: ${item.user_id}, Match: ${isOwner}`);
+    return (
+      <View style={styles.commentCard}>
+        <View style={styles.commentHeader}>
           <Image
-            source={{ uri: `http://localhost:3001${comment.profile_picture_url}` }}
-            style={styles.commentProfilePicture}
+            source={{ uri: item.profile_picture_url ? `http://localhost:3001${item.profile_picture_url}` : `https://placehold.co/40x40/4DFFFF/000000?text=${item.username[0]}` }}
+            style={styles.profilePicture}
+            onError={(e) => console.log('Erro ao carregar imagem:', e.nativeEvent.error)}
           />
-        ) : (
-          <View style={[styles.commentProfilePicture, styles.commentProfilePicturePlaceholder]}>
-            <Ionicons name="person" size={24} color="#A366FF" />
+          <Text style={styles.commentUsername}>{item.username}</Text>
+        </View>
+        <Text style={styles.commentContent}>{item.content}</Text>
+        {isOwner && (
+          <View style={styles.commentActions}>
+            <TouchableOpacity onPress={() => handleEditComment(item)}>
+              <Ionicons name="create-outline" size={20} color="#4DFFFF" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleDeleteComment(item)}>
+              <Ionicons name="trash-outline" size={20} color="#F353D5" />
+            </TouchableOpacity>
           </View>
         )}
-        <Text style={styles.commentUsername}>{comment.username}</Text>
-        <Text style={styles.commentTimestamp}>{new Date(comment.created_at).toLocaleString()}</Text>
+        <Text style={styles.commentDate}>
+          {new Date(item.created_at).toLocaleDateString()}
+        </Text>
       </View>
-      <Text style={styles.commentContent}>{comment.content}</Text>
-    </View>
-  );
-
-  const getAnimatedPlaceholderStyle = (animValue) => ({
-    top: animValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [20, 5],
-    }),
-    fontSize: animValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: [16, 12],
-    }),
-    color: animValue.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['#E5E5E5', '#A366FF'],
-    }),
-  });
+    );
+  };
 
   if (loading) {
     return (
-      <ImageBackground source={background} style={styles.background}>
-        <SafeAreaView style={[styles.safeArea, { justifyContent: 'center', alignItems: 'center' }]}>
-          <ActivityIndicator size="large" color="#A366FF" />
-        </SafeAreaView>
-      </ImageBackground>
+      <View style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color="#4DFFFF" />
+      </View>
     );
   }
 
   if (!post) {
     return (
-      <ImageBackground source={background} style={styles.background}>
-        <SafeAreaView style={styles.safeArea}>
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={24} color="#A366FF" />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Post</Text>
-            <View style={{ width: 24 }} />
-          </View>
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>Post não encontrado.</Text>
-          </View>
-        </SafeAreaView>
-      </ImageBackground>
+      <View style={styles.container}>
+        <Text style={styles.noContentText}>Post não encontrado.</Text>
+      </View>
     );
   }
 
   return (
-    <ImageBackground source={background} style={styles.background}>
-      <SafeAreaView style={styles.safeArea}>
-        {/* Cabeçalho da página, igual ao das outras telas */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#A366FF" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Detalhes do Post</Text>
-          <View style={{ width: 24 }} />
-        </View>
-
-        <FlatList
-          ListHeaderComponent={() => (
-            <>
-              {/* Card do Post Principal */}
-              <View style={styles.postCard}>
-                <View style={styles.postHeader}>
-                  {post.profile_picture_url ? (
-                    <Image
-                      source={{ uri: `http://localhost:3001${post.profile_picture_url}` }}
-                      style={styles.profilePicture}
-                    />
-                  ) : (
-                    <View style={[styles.profilePicture, styles.profilePicturePlaceholder]}>
-                      <Ionicons name="person" size={24} color="#A366FF" />
-                    </View>
-                  )}
-                  <Text style={styles.postUsername}>{post.username}</Text>
-                  <Text style={styles.postTimestamp}>{new Date(post.created_at).toLocaleString()}</Text>
-                </View>
-                <Text style={styles.postTitle}>{post.title}</Text>
-                <Text style={styles.postContent}>{post.content}</Text>
-                {post.image_url && (
-                  <Image source={{ uri: `http://localhost:3001${post.image_url}` }} style={styles.postImage} />
-                )}
-              </View>
-              <Text style={styles.commentsTitle}>Comentários</Text>
-            </>
-          )}
-          data={comments}
-          renderItem={renderComment}
-          keyExtractor={(item) => item.id.toString()}
-          contentContainerStyle={styles.commentListContent}
-          // Componente para exibir quando a lista de comentários estiver vazia
-          ListEmptyComponent={() => (
-            <View style={styles.emptyCommentsContainer}>
-              <Ionicons name="chatbubbles-outline" size={50} color="#A366FF" />
-              <Text style={styles.emptyCommentsText}>
-                Ainda não há comentários. Seja o primeiro a comentar!
-              </Text>
-            </View>
-          )}
-        />
-
-        {/* Área de Comentário */}
-        <View style={styles.addCommentContainer}>
-          <View style={styles.inputContainer}>
-            <Animated.Text style={[styles.placeholder, getAnimatedPlaceholderStyle(newCommentAnim)]}>
-              Adicionar um Comentário...
-            </Animated.Text>
-            <TextInput
-              style={styles.input}
-              value={newCommentContent}
-              onChangeText={setNewCommentContent}
-              onFocus={() => animatePlaceholderUp(newCommentAnim)}
-              onBlur={() => animatePlaceholderDown(newCommentAnim, newCommentContent)}
-              multiline={true}
-            />
+    <SafeAreaView style={styles.safeArea}>
+      <ImageBackground source={background} style={styles.background}>
+        <View style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color="#E5E5E5" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Detalhes do Post</Text>
           </View>
-          <TouchableOpacity
-            style={isSubmittingComment ? styles.commentButtonDisabled : styles.commentButton}
-            onPress={handleAddComment}
-            disabled={isSubmittingComment}
-          >
-            {isSubmittingComment ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Ionicons name="send" size={24} color="#fff" />
-            )}
-          </TouchableOpacity>
+          <ScrollView contentContainerStyle={styles.scrollContainer}>
+            <View style={styles.postCard}>
+              <Text style={styles.postTitle}>{post.title}</Text>
+              <Text style={styles.postContent}>{post.content}</Text>
+              {post.image_url && (
+                <Image
+                  source={{ uri: `http://localhost:3001${post.image_url}` }}
+                  style={styles.postImage}
+                  onError={(e) => console.log('Erro ao carregar imagem:', e.nativeEvent.error)}
+                />
+              )}
+              <View style={styles.postStats}>
+                <Text style={styles.postStatItem}>
+                  {post.likes_count} Curtidas
+                </Text>
+                <Text style={styles.postStatItem}>
+                  {post.comments_count} Comentários
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.commentsSection}>
+              <Text style={styles.commentsTitle}>Comentários</Text>
+              {comments.length > 0 ? (
+                <FlatList
+                  data={comments}
+                  renderItem={renderComment}
+                  keyExtractor={(item) => item.id.toString()}
+                  scrollEnabled={false}
+                />
+              ) : (
+                <Text style={styles.emptyCommentsText}>
+                  Nenhum comentário ainda. Seja o primeiro!
+                </Text>
+              )}
+            </View>
+          </ScrollView>
+
+          <View style={styles.addCommentContainer}>
+            <View style={styles.inputContainer}>
+              <Animated.Text
+                style={[
+                  styles.placeholder,
+                  {
+                    transform: [
+                      {
+                        translateY: newCommentAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [15, -15],
+                        }),
+                      },
+                    ],
+                    fontSize: newCommentAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [16, 12],
+                    }),
+                    color: newCommentAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['#A366FF', '#4DFFFF'],
+                    }),
+                  },
+                ]}
+              >
+                Adicionar um comentário...
+              </Animated.Text>
+              <TextInput
+                style={styles.input}
+                value={newCommentContent}
+                onChangeText={setNewCommentContent}
+                multiline
+                onFocus={() => animatePlaceholderUp(newCommentAnim)}
+                onBlur={() => !newCommentContent && animatePlaceholderDown(newCommentAnim)}
+              />
+            </View>
+            <TouchableOpacity
+              onPress={handleNewComment}
+              disabled={isSubmittingComment}
+              style={[styles.commentButton, isSubmittingComment && styles.commentButtonDisabled]}
+            >
+              <Ionicons name="send" size={24} color="#E5E5E5" />
+            </TouchableOpacity>
+          </View>
         </View>
-      </SafeAreaView>
-    </ImageBackground>
+      </ImageBackground>
+
+      {/* Modal de Edição */}
+      <Modal isVisible={isEditModalVisible} style={styles.modal}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Editar Comentário</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={editedContent}
+            onChangeText={setEditedContent}
+            multiline
+          />
+          <View style={styles.modalButtons}>
+            <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={() => setEditModalVisible(false)}>
+              <Text style={styles.buttonText}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.modalButton, styles.saveButton]} onPress={handleSaveEdit}>
+              <Text style={styles.buttonText}>Salvar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal de Confirmação de Exclusão */}
+      <Modal isVisible={isDeleteModalVisible} style={styles.modal}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Excluir Comentário?</Text>
+          <Text style={styles.modalMessage}>Tem certeza que deseja excluir este comentário? Esta ação é irreversível.</Text>
+          <View style={styles.modalButtons}>
+            <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={() => setDeleteModalVisible(false)}>
+              <Text style={styles.buttonText}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.modalButton, styles.deleteButton]} onPress={handleConfirmDelete}>
+              <Text style={styles.buttonText}>Excluir</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  background: {
-    flex: 1,
-    resizeMode: 'cover',
-  },
   safeArea: {
     flex: 1,
   },
+  background: {
+    flex: 1,
+    resizeMode: 'cover',
+    justifyContent: 'center',
+  },
+  container: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    justifyContent: 'space-between',
+    padding: 15,
     backgroundColor: 'rgba(10, 25, 47, 0.95)',
     borderBottomWidth: 1,
-    borderBottomColor: '#4DFFFF',
-    shadowColor: '#4DFFFF',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 5,
+    borderBottomColor: '#A366FF',
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#E5E5E5',
+    textAlign: 'center',
+    flex: 1,
   },
   backButton: {
     padding: 5,
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#E5E5E5',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorText: {
-    color: '#E5E5E5',
-    fontSize: 18,
-    textAlign: 'center',
-  },
-  commentListContent: {
-    paddingBottom: 15,
+  scrollContainer: {
+    flexGrow: 1,
+    paddingVertical: 20,
   },
   postCard: {
     backgroundColor: 'rgba(10, 25, 47, 0.95)',
     padding: 20,
+    marginHorizontal: 15,
     borderRadius: 15,
-    marginBottom: 10,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: '#A366FF',
     shadowColor: '#A366FF',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 10,
-    marginHorizontal: 15,
-  },
-  postHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  profilePicture: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 10,
-    borderWidth: 1,
-    borderColor: '#4DFFFF',
-  },
-  profilePicturePlaceholder: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(77, 255, 255, 0.2)',
-  },
-  postUsername: {
-    fontWeight: 'bold',
-    fontSize: 16,
-    color: '#E5E5E5',
-    flex: 1,
-  },
-  postTimestamp: {
-    fontSize: 12,
-    color: '#888',
   },
   postTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 8,
     color: '#4DFFFF',
+    marginBottom: 10,
   },
   postContent: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 16,
     color: '#E5E5E5',
-    marginBottom: 10,
+    lineHeight: 24,
   },
   postImage: {
     width: '100%',
     height: 200,
     borderRadius: 10,
-    marginTop: 10,
+    marginTop: 15,
     resizeMode: 'cover',
     borderWidth: 1,
-    borderColor: '#A366FF',
+    borderColor: '#4DFFFF',
+  },
+  postStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#A366FF',
+    paddingTop: 10,
+  },
+  postStatItem: {
+    fontSize: 14,
+    color: '#E5E5E5',
+  },
+  commentsSection: {
+    marginHorizontal: 15,
   },
   commentsTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#A366FF',
-    marginHorizontal: 15,
-    marginTop: 10,
-    marginBottom: 10,
+    color: '#4DFFFF',
+    marginBottom: 15,
   },
   commentCard: {
     backgroundColor: 'rgba(10, 25, 47, 0.9)',
     padding: 15,
-    borderRadius: 15,
-    marginHorizontal: 15,
+    borderRadius: 10,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#4DFFFF',
-    shadowColor: '#4DFFFF',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
+    borderColor: '#A366FF',
   },
   commentHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 5,
   },
-  commentProfilePicture: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  profilePicture: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     marginRight: 10,
     borderWidth: 1,
     borderColor: '#4DFFFF',
-  },
-  commentProfilePicturePlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(77, 255, 255, 0.2)',
   },
   commentUsername: {
     fontWeight: 'bold',
     fontSize: 14,
     color: '#E5E5E5',
-    flex: 1,
-  },
-  commentTimestamp: {
-    fontSize: 12,
-    color: '#888',
   },
   commentContent: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#E5E5E5',
+    marginLeft: 40,
+  },
+  commentActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
     marginTop: 5,
+  },
+  commentDate: {
+    fontSize: 12,
+    color: '#ccc',
+    marginTop: 5,
+    textAlign: 'right',
+  },
+  emptyCommentsText: {
+    textAlign: 'center',
+    marginTop: 10,
+    fontSize: 16,
+    color: '#E5E5E5',
   },
   addCommentContainer: {
     flexDirection: 'row',
@@ -434,7 +524,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10, 25, 47, 0.9)',
     color: '#E5E5E5',
     fontSize: 16,
-    paddingTop: 25, 
+    paddingTop: 25,
   },
   placeholder: {
     position: 'absolute',
@@ -455,31 +545,77 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   commentButtonDisabled: {
-    backgroundColor: '#F353D5',
-    opacity: 0.6,
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    backgroundColor: '#6b2d5f',
+  },
+  modal: {
     justifyContent: 'center',
     alignItems: 'center',
   },
-  emptyCommentsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    marginHorizontal: 15,
-    backgroundColor: 'rgba(10, 25, 47, 0.8)',
+  modalContent: {
+    backgroundColor: '#0A192F',
+    padding: 22,
     borderRadius: 15,
+    borderColor: '#4DFFFF',
+    borderWidth: 1,
+    width: '80%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    color: '#E5E5E5',
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: 16,
+    color: '#ccc',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modalInput: {
+    backgroundColor: 'rgba(10, 25, 47, 0.9)',
     borderWidth: 1,
     borderColor: '#A366FF',
-  },
-  emptyCommentsText: {
-    color: '#E5E5E5',
+    borderRadius: 10,
+    padding: 15,
     fontSize: 16,
+    color: '#E5E5E5',
+    minHeight: 120,
+    textAlignVertical: 'top',
+  },
+  modalButtons: {
+    marginTop: 15,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  modalButton: {
+    padding: 10,
+    borderRadius: 8,
+    flex: 1,
+    marginHorizontal: 5,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#555',
+  },
+  saveButton: {
+    backgroundColor: '#F353D5',
+  },
+  deleteButton: {
+    backgroundColor: '#F353D5',
+  },
+  buttonText: {
+    color: '#E5E5E5',
+    fontWeight: 'bold',
+  },
+  noContentText: {
     textAlign: 'center',
-    marginTop: 10,
-  }
+    marginTop: 30,
+    fontSize: 16,
+    color: '#E5E5E5',
+    marginHorizontal: 15,
+  },
 });
 
 export default PostDetailScreen;
