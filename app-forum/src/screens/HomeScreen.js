@@ -13,7 +13,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import background from '../../assets/3348271.jpg';
-import { useIsFocused } from '@react-navigation/native';
 
 const HomeScreen = ({ navigation }) => {
   const { signOut } = useContext(AuthContext);
@@ -29,7 +28,6 @@ const HomeScreen = ({ navigation }) => {
   const [currentUsername, setCurrentUsername] = useState('Carregando...');
   const [currentProfilePicture, setCurrentProfilePicture] = useState(null);
   const [newPostImageUri, setNewPostImageUri] = useState(null);
-  const isFocused = useIsFocused();
 
 
   // Referências e valores de animação para os inputs
